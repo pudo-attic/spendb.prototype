@@ -1,0 +1,12 @@
+
+DEBUG = True
+SECRET_KEY = 'no'
+
+BROKER_TRANSPORT = "sqlakombu.transport.Transport"
+CELERY_BACKEND = "database" 
+
+SOLR_URL = 'http://127.0.0.1:8983/solr/spendb'
+
+SQLALCHEMY_DATABASE_URI = 'sqlite:///spendb.db'
+BROKER_HOST = SQLALCHEMY_DATABASE_URI
+CELERY_RESULT_DBURI = SQLALCHEMY_DATABASE_URI
