@@ -1,5 +1,4 @@
 import json 
-from itertools import chain
 from sqlalchemy import create_engine
 from sqlalchemy import select
 from sqlalchemy import Integer, UnicodeText, Float
@@ -33,11 +32,19 @@ class TableHandler(object):
             row = bind.execute(q).fetchone()
             return row['id']
 
+    def _flush(self, bind):
+        q = self.table.delete()
+        bind.execute(q)
+    
+    def _drop(self, bind):
+        self.table.drop()
+        del self.table
+
 class Attribute(object):
 
-    def __init__(self, dataset, data):
+    def __init__(self, parent, data):
         self._data = data
-        self.dataset = dataset
+        self.parent = parent
         self.name = data.get('name')
         self.source_column = data.get('column')
         self.default = data.get('default', data.get('constant'))
@@ -46,7 +53,11 @@ class Attribute(object):
 
     @property
     def selectable(self):
-        return self.column
+        return self.column_alias
+
+    @property
+    def column_alias(self):
+        return self.parent.alias.c[self.column.name]
 
     def generate(self, meta, table):
         if self.name in table.c:
@@ -78,9 +89,15 @@ class Dimension(object):
         self.name = name
         self.label = data.get('label', name)
         self.facet = data.get('facet')
-    
+
     def join(self, from_clause):
         return from_clause
+
+    def flush(self, bind):
+        pass
+
+    def drop(self, bind):
+        del self.column
 
     def __getitem__(self, name):
         raise KeyError()
@@ -107,6 +124,12 @@ class Metric(Attribute):
     def join(self, from_clause):
         return from_clause
 
+    def flush(self, bind):
+        pass
+
+    def drop(self, bind):
+        pass
+
     def __getitem__(self, name):
         raise KeyError()
 
@@ -120,10 +143,21 @@ class ComplexDimension(Dimension, TableHandler):
         self.scheme = data.get('scheme', data.get('taxonomy', 'entity'))
         self.attributes = []
         for attr in data.get('attributes', data.get('fields', [])):
-            self.attributes.append(Attribute(dataset, attr))
+            self.attributes.append(Attribute(self, attr))
 
     def join(self, from_clause):
-        return from_clause.join(self.alias, self.alias.c.id==self.column)
+        return from_clause.join(self.alias, self.alias.c.id==self.column_alias)
+    
+    def flush(self, bind):
+        self._flush(bind)
+    
+    def drop(self, bind):
+        self._drop(bind)
+        del self.column
+
+    @property
+    def column_alias(self):
+        return self.dataset.alias.c[self.column.name]
 
     @property
     def selectable(self):
@@ -136,13 +170,13 @@ class ComplexDimension(Dimension, TableHandler):
         raise KeyError()
 
     def generate(self, meta, entry_table):
-        self._ensure_table(meta, self.scheme)
+        self._ensure_table(meta, self.dataset.name + '_' + self.scheme)
         for attr in self.attributes:
             attr.generate(meta, self.table)
         fk = self.name + '_id'
         if not fk in entry_table.c:
-            self.column = Column(self.name + '_id', Integer)
-            self.column.create(entry_table)
+            self.column = Column(self.name + '_id', Integer, index=True)
+            self.column.create(entry_table, index_name=self.name + '_id_index')
         else:
             self.column = entry_table.c[fk]
         self.alias = self.table.alias(self.name)
@@ -151,7 +185,6 @@ class ComplexDimension(Dimension, TableHandler):
         dim = dict()
         for attr in self.attributes:
             dim.update(attr.load(bind, row))
-        #pprint(dim)
         pk = self._upsert(bind, dim, ['name'])
         return {self.column.name: pk}
 
@@ -183,6 +216,7 @@ class Dataset(TableHandler):
             self.dimensions.append(dimension)
 
     def __getitem__(self, name):
+        """ Access a field (dimension or metric) by name. """
         for field in self.fields:
             if field.name == name:
                 return field
@@ -190,10 +224,12 @@ class Dataset(TableHandler):
 
     @property
     def fields(self):
+        """ Both the dimensions and metrics in this dataset. """
         return self.dimensions + self.metrics
 
     def generate(self, meta):
-        self._ensure_table(meta, 'entry')
+        """ Create the main entity table for this dataset. """
+        self._ensure_table(meta, self.name + '_entry')
         for field in self.fields:
             field.generate(meta, self.table)
         self.alias = self.table.alias('entry')
@@ -209,7 +245,22 @@ class Dataset(TableHandler):
             self.load(bind, row)
         #bind.commit()
 
+    def flush(self, bind):
+        for field in self.fields:
+            field.flush(bind)
+        self._flush(bind)
+
+    def drop(self, bind):
+        for field in self.fields:
+            field.drop(bind)
+        self._drop(bind)
+
     def key(self, key):
+        """ For a given ``key``, find a column to indentify it in a query.
+        A ``key`` is either the name of a simple attribute (e.g. ``time``)
+        or of an attribute of a complex dimension (e.g. ``to.label``). The
+        returned key is using an alias, so it can be used in a query 
+        directly. """
         attr = None
         if '.' in key:
             key, attr = key.split('.', 1)
@@ -333,13 +384,13 @@ def load(file_name, db_url):
     meta.bind = engine
     
     dataset.generate(meta)
-    a = dataset.aggregate(engine, drilldowns=['titel', 'flow'],
-                          pagesize=10)
-    pprint(a)
-    print "-" * 80
-    a = dataset.aggregate(engine, drilldowns=['titel.name', 'flow'],
-                          cuts=[('to', '04'), ('to', '02')], pagesize=5)
-    pprint(a)
+    #a = dataset.aggregate(engine, drilldowns=['titel', 'flow'],
+    #                      pagesize=10)
+    #pprint(a)
+    #print "-" * 80
+    #a = dataset.aggregate(engine, drilldowns=['titel.name', 'flow'],
+    #                      cuts=[('to', '04'), ('to', '02')], pagesize=5)
+    #pprint(a)
     #import csv
     #reader = csv.DictReader(open('/Users/fl/Data/bundeshaushalt/bund_2010.csv', 'r'))
     #dataset.load_all(engine, reader)
@@ -448,8 +499,7 @@ class DatasetTestCase(unittest.TestCase):
 
     def test_generate_db_entry_table(self):
         self.ds.generate(self.meta)
-        assert self.ds.table.name=='entry', self.ds.table.name
-        assert self.ds.alias.name=='entry', self.ds.alias.name
+        assert self.ds.table.name=='test_entry', self.ds.table.name
         cols = self.ds.table.c
         assert 'id' in cols
         assert isinstance(cols['id'].type, Integer)
@@ -488,6 +538,25 @@ class DatasetLoadTestCase(unittest.TestCase):
         assert row0['time']=='2010', row0.items()
         assert row0['amount']==200, row0.items()
         assert row0['field']=='foo', row0.items()
+    
+    def test_flush(self):
+        self.ds.load_all(self.engine, self.reader)
+        resn = self.engine.execute(self.ds.table.select()).fetchall()
+        assert len(resn)==6,resn
+        self.ds.flush(self.engine)
+        resn = self.engine.execute(self.ds.table.select()).fetchall()
+        assert len(resn)==0,resn
+    
+    def test_drop(self):
+        tn = self.engine.table_names()
+        assert 'test_entry' in tn, tn
+        assert 'test_entity' in tn, tn
+        assert 'test_funny' in tn, tn
+        self.ds.drop(self.engine)
+        tn = self.engine.table_names()
+        assert 'test_entry' not in tn, tn
+        assert 'test_entity' not in tn, tn
+        assert 'test_funny' not in tn, tn
 
     def test_aggregate_simple(self):
         self.ds.load_all(self.engine, self.reader)
@@ -507,14 +576,14 @@ class DatasetLoadTestCase(unittest.TestCase):
                                                    ('field', u'bar')])
         assert res['summary']['num_entries']==4, res
         assert res['summary']['amount']==1190, res
-    
+
     def test_aggregate_dimensions_drilldown(self):
         self.ds.load_all(self.engine, self.reader)
         res = self.ds.aggregate(self.engine, drilldowns=['function'])
         assert res['summary']['num_entries']==6, res
         assert res['summary']['amount']==2690, res
         assert len(res['drilldown'])==2, res['drilldown']
-    
+
     def test_aggregate_two_dimensions_drilldown(self):
         self.ds.load_all(self.engine, self.reader)
         res = self.ds.aggregate(self.engine, drilldowns=['function', 'field'])
@@ -522,7 +591,7 @@ class DatasetLoadTestCase(unittest.TestCase):
         assert res['summary']['num_entries']==6, res
         assert res['summary']['amount']==2690, res
         assert len(res['drilldown'])==5, res['drilldown']
-    
+
     def test_materialize_table(self):
         self.ds.load_all(self.engine, self.reader)
         itr = self.ds.materialize(self.engine)
@@ -532,6 +601,7 @@ class DatasetLoadTestCase(unittest.TestCase):
         assert isinstance(row['field'], unicode), row
         assert isinstance(row['function'], dict), row
         assert isinstance(row['to'], dict), row
+
 
 class ComplexDimensionTestCase(unittest.TestCase):
 
@@ -555,7 +625,7 @@ class ComplexDimensionTestCase(unittest.TestCase):
         assert not hasattr(self.entity, 'table'), self.entity
         self.ds.generate(self.meta)
         assert hasattr(self.entity, 'table'), self.entity
-        assert self.entity.table.name==self.entity.scheme, self.entity.table.name
+        assert self.entity.table.name=='test_' + self.entity.scheme, self.entity.table.name
         assert hasattr(self.entity, 'alias')
         assert self.entity.alias.name==self.entity.name, self.entity.alias.name
         cols = self.entity.table.c
