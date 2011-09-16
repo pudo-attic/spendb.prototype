@@ -6,6 +6,7 @@ BROKER_TRANSPORT = "sqlakombu.transport.Transport"
 CELERY_BACKEND = "database" 
 
 SOLR_URL = 'http://127.0.0.1:8983/solr/spendb'
+STAGING_DATA_PATH = '/tmp'
 
 SQLALCHEMY_DATABASE_URI = 'sqlite:///spendb.db'
 BROKER_HOST = SQLALCHEMY_DATABASE_URI

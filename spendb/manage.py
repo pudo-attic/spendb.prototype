@@ -1,10 +1,11 @@
 import json
+import os
 
 from flaskext.script import Manager
 from flaskext.celery import install_commands as install_celery_commands
 
 from spendb.core import app, db
-from spendb.model import Dataset, DatasetLogger
+from spendb.model import Dataset, DatasetLogger, Source
 
 manager = Manager(app)
 install_celery_commands(manager)
@@ -13,6 +14,12 @@ install_celery_commands(manager)
 def createdb():
     """ Create the SQLAlchemy database. """
     db.create_all()
+
+def _get_ds(name):
+    ds = Dataset.query.filter_by(name=name).first()
+    if ds is None:
+        raise ValueError("Dataset does not exist: %s" % name)
+    return ds
 
 @manager.command
 def dsinit(filename):
@@ -34,12 +41,18 @@ def dsinit(filename):
 @manager.command
 def dsdrop(dataset):
     """ Drop a dataset and all associated objects. """
-    ds = Dataset.query.filter_by(name=dataset).first()
-    if ds is None:
-        raise ValueError("Dataset does not exist: %s" % dataset)
+    ds = _get_ds(dataset)
     ds.generate()
     ds.drop()
     db.session.delete(ds)
+    db.session.commit()
+
+@manager.command
+def dsflush(dataset):
+    """ Flush all data from a dataset. """
+    ds = _get_ds(dataset)
+    ds.generate()
+    ds.flush()
     db.session.commit()
 
 @manager.command
@@ -51,6 +64,42 @@ def dslist():
     for dataset in Dataset.query:
         m = fmt % (dataset.id, dataset.name, dataset.label)
         print m.encode('utf-8')
+
+@manager.command
+def srcadd(dataset, filename):
+    """ Add a source file to a dataset. """
+    ds = _get_ds(dataset)
+    src = Source(ds, 'file', filename)
+    for other in ds.sources:
+        if other.name == src.name:
+            raise ValueError("Source already exists: %s" % other.name)
+    db.session.add(src)
+    import shutil
+    print "Copying to %s..." % src.staging_path
+    shutil.copyfile(filename, src.staging_path)
+    db.session.commit()
+
+@manager.command
+def srclist(dataset):
+    """ List all source files for a dataset. """
+    ds = _get_ds(dataset)
+    fmt = " %-5s | %-55s | %-20s"
+    print fmt % ('id', 'name', 'type')
+    print '-' * 80
+    for source in ds.sources:
+        m = fmt % (source.id, source.name, source.type)
+        print m.encode('utf-8')
+
+@manager.command
+def srcrm(dataset, source):
+    """ Remove a source from a dataset. """
+    ds = _get_ds(dataset)
+    for src in ds.sources:
+        if src.name == source:
+            db.session.delete(src)
+            if os.path.exists(src.staging_path):
+                os.remove(src.staging_path)
+            db.session.commit()
 
 def spendb():
     manager.run()
