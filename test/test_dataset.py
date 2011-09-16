@@ -15,11 +15,6 @@ class DatasetTestCase(unittest.TestCase):
 
     def setUp(self):
         make_test_app()
-        #engine = create_engine('sqlite:///:memory:')
-        self.engine = core.db.engine 
-        #construct_engine(engine)
-        self.meta = core.db.metadata #MetaData()
-        self.meta.bind = self.engine
         self.ds = Dataset(SIMPLE_MODEL)
     
     def tearDown(self):
@@ -40,7 +35,7 @@ class DatasetTestCase(unittest.TestCase):
         assert isinstance(self.ds['amount'], Metric), self.ds['amount']
 
     def test_value_dimensions_as_attributes(self):
-        self.ds.generate(self.meta)
+        self.ds.generate()
         dim = self.ds['field']
         assert isinstance(dim.column.type, UnicodeText), dim.column
         assert 'field'==dim.column.name, dim.column
@@ -56,7 +51,7 @@ class DatasetTestCase(unittest.TestCase):
         assert not hasattr(dim, 'alias')
 
     def test_generate_db_entry_table(self):
-        self.ds.generate(self.meta)
+        self.ds.generate()
         assert self.ds.table.name=='test_entry', self.ds.table.name
         cols = self.ds.table.c
         assert 'id' in cols
@@ -79,20 +74,16 @@ class DatasetLoadTestCase(unittest.TestCase):
 
     def setUp(self):
         make_test_app()
-        #engine = create_engine('sqlite:///:memory:')
-        self.engine = core.db.engine 
-        #construct_engine(engine)
-        self.meta = core.db.metadata #MetaData()
-        self.meta.bind = self.engine
         self.ds = Dataset(SIMPLE_MODEL)
-        self.ds.generate(self.meta)
+        self.engine = core.db.engine
+        self.ds.generate()
         self.reader = csv.DictReader(StringIO(TEST_DATA))
     
     def tearDown(self):
         tear_down_test_app()
     
     def test_load_all(self):
-        self.ds.load_all(self.engine, self.reader)
+        self.ds.load_all(self.reader)
         resn = self.engine.execute(self.ds.table.select()).fetchall()
         assert len(resn)==6,resn
         row0 = resn[0]
@@ -101,10 +92,10 @@ class DatasetLoadTestCase(unittest.TestCase):
         assert row0['field']=='foo', row0.items()
     
     def test_flush(self):
-        self.ds.load_all(self.engine, self.reader)
+        self.ds.load_all(self.reader)
         resn = self.engine.execute(self.ds.table.select()).fetchall()
         assert len(resn)==6,resn
-        self.ds.flush(self.engine)
+        self.ds.flush()
         resn = self.engine.execute(self.ds.table.select()).fetchall()
         assert len(resn)==0,resn
     
@@ -113,7 +104,7 @@ class DatasetLoadTestCase(unittest.TestCase):
         assert 'test_entry' in tn, tn
         assert 'test_entity' in tn, tn
         assert 'test_funny' in tn, tn
-        self.ds.drop(self.engine)
+        self.ds.drop()
         tn = self.engine.table_names()
         assert 'test_entry' not in tn, tn
         assert 'test_entity' not in tn, tn
@@ -121,42 +112,42 @@ class DatasetLoadTestCase(unittest.TestCase):
 
 
     def test_aggregate_simple(self):
-        self.ds.load_all(self.engine, self.reader)
-        res = self.ds.aggregate(self.engine)
+        self.ds.load_all(self.reader)
+        res = self.ds.aggregate()
         assert res['summary']['num_entries']==6, res
         assert res['summary']['amount']==2690.0, res
 
     def test_aggregate_basic_cut(self):
-        self.ds.load_all(self.engine, self.reader)
-        res = self.ds.aggregate(self.engine, cuts=[('field', u'foo')])
+        self.ds.load_all(self.reader)
+        res = self.ds.aggregate(cuts=[('field', u'foo')])
         assert res['summary']['num_entries']==3, res
         assert res['summary']['amount']==1000, res
 
     def test_aggregate_or_cut(self):
-        self.ds.load_all(self.engine, self.reader)
-        res = self.ds.aggregate(self.engine, cuts=[('field', u'foo'), 
-                                                   ('field', u'bar')])
+        self.ds.load_all(self.reader)
+        res = self.ds.aggregate(cuts=[('field', u'foo'), 
+                                      ('field', u'bar')])
         assert res['summary']['num_entries']==4, res
         assert res['summary']['amount']==1190, res
 
     def test_aggregate_dimensions_drilldown(self):
-        self.ds.load_all(self.engine, self.reader)
-        res = self.ds.aggregate(self.engine, drilldowns=['function'])
+        self.ds.load_all(self.reader)
+        res = self.ds.aggregate(drilldowns=['function'])
         assert res['summary']['num_entries']==6, res
         assert res['summary']['amount']==2690, res
         assert len(res['drilldown'])==2, res['drilldown']
 
     def test_aggregate_two_dimensions_drilldown(self):
-        self.ds.load_all(self.engine, self.reader)
-        res = self.ds.aggregate(self.engine, drilldowns=['function', 'field'])
+        self.ds.load_all(self.reader)
+        res = self.ds.aggregate(drilldowns=['function', 'field'])
         #pprint(res)
         assert res['summary']['num_entries']==6, res
         assert res['summary']['amount']==2690, res
         assert len(res['drilldown'])==5, res['drilldown']
 
     def test_materialize_table(self):
-        self.ds.load_all(self.engine, self.reader)
-        itr = self.ds.materialize(self.engine)
+        self.ds.load_all(self.reader)
+        itr = self.ds.materialize()
         tbl = list(itr)
         assert len(tbl)==6, tbl
         row = tbl[0]

@@ -26,5 +26,7 @@ setup(name='spendb',
       ],
       entry_points="""
       # -*- Entry points: -*-
+      [console_scripts]
+      spendb = spendb.manage:spendb
       """,
       )

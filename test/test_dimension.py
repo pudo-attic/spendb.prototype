@@ -2,12 +2,10 @@ from StringIO import StringIO
 import csv
 import unittest
 
-from sqlalchemy import Integer, UnicodeText, Float
-
 from common import SIMPLE_MODEL, TEST_DATA, make_test_app, tear_down_test_app
 
 from spendb import core
-from spendb.model import Dataset, ValueDimension, ComplexDimension, Metric
+from spendb.model import Dataset
 
 class ComplexDimensionTestCase(unittest.TestCase):
 
@@ -25,7 +23,7 @@ class ComplexDimensionTestCase(unittest.TestCase):
         tear_down_test_app()
 
     def test_basic_properties(self):
-        self.ds.generate(self.meta)
+        self.ds.generate()
         assert self.entity.name=='to', self.entity.name
         assert self.classifier.name=='function', self.classifier.name
         assert self.entity.scheme=='entity', self.entity.scheme
@@ -33,7 +31,7 @@ class ComplexDimensionTestCase(unittest.TestCase):
         
     def test_generated_tables(self):
         assert not hasattr(self.entity, 'table'), self.entity
-        self.ds.generate(self.meta)
+        self.ds.generate()
         assert hasattr(self.entity, 'table'), self.entity
         assert self.entity.table.name=='test_' + self.entity.scheme, self.entity.table.name
         assert hasattr(self.entity, 'alias')
@@ -50,7 +48,7 @@ class ComplexDimensionTestCase(unittest.TestCase):
         assert self.entity['const'].default=='true'
 
     def test_attributes_exist_on_table(self):
-        self.ds.generate(self.meta)
+        self.ds.generate()
         assert hasattr(self.entity, 'table'), self.entity
         assert 'name' in self.entity.table.c, self.entity.table.c
         assert 'label' in self.entity.table.c, self.entity.table.c

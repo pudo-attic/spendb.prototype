@@ -65,6 +65,7 @@ def make_test_app(use_cookies=False):
     web.app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
     web.app.config['ELASTIC_SEARCH_INDEX'] = 'datahub_test'
     core.db.create_all()
+
     #manage.resetsearch()
     return web.app.test_client(use_cookies=use_cookies)
 

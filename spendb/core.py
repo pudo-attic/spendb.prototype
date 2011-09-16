@@ -19,6 +19,6 @@ app.config.from_object(default_settings)
 app.config.from_envvar('SPENDB_SETTINGS', silent=True)
 
 db = SQLAlchemy(app)
-
+#db.metadata.bind = db.engine
 #import ipdb; ipdb.set_trace()
 

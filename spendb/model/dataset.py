@@ -2,11 +2,18 @@ from collections import defaultdict
 
 from spendb.core import db
 
-from spendb.model.common import TableHandler
+from spendb.model.common import TableHandler, JSONType
 from spendb.model.dimension import ComplexDimension, ValueDimension
 from spendb.model.dimension import Metric
 
-class Dataset(TableHandler):
+class Dataset(TableHandler, db.Model):
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.Unicode(255), unique=True)
+    label = db.Column(db.Unicode(2000))
+    description = db.Column(db.Unicode())
+    currency = db.Column(db.Unicode())
+    data = db.Column(JSONType, default=dict)
 
     def __init__(self, data):
         self.data = data
@@ -14,14 +21,11 @@ class Dataset(TableHandler):
         self.label = dataset.get('label')
         self.name = dataset.get('name')
         self.description = dataset.get('description')
+        self.currency = dataset.get('currency')
         self._load_model()
-    
+
     @db.reconstructor
     def _load_model(self):
-        dataset = self.data.get('dataset', {})
-        self.label = dataset.get('label')
-        self.currency = dataset.get('currency')
-
         self.dimensions = []
         self.metrics = []
         for dim, data in self.data.get('mapping', {}).items():
@@ -33,8 +37,7 @@ class Dataset(TableHandler):
             else:
                 dimension = ComplexDimension(self, dim, data)
             self.dimensions.append(dimension)
-
-
+    
     def __getitem__(self, name):
         """ Access a field (dimension or metric) by name. """
         for field in self.fields:
@@ -47,33 +50,37 @@ class Dataset(TableHandler):
         """ Both the dimensions and metrics in this dataset. """
         return self.dimensions + self.metrics
 
-    def generate(self, meta):
+    def generate(self):
         """ Create the main entity table for this dataset. """
-        self._ensure_table(meta, self.name + '_entry')
+        self.bind = db.engine
+        self.meta = db.metadata
+        self.meta.bind = self.bind
+
+        self._ensure_table(self.meta, self.name + '_entry')
         for field in self.fields:
-            field.generate(meta, self.table)
+            field.generate(self.meta, self.table)
         self.alias = self.table.alias('entry')
 
-    def load(self, bind, row):
+    def load(self, row):
         entry = dict()
         for field in self.fields:
-            entry.update(field.load(bind, row))
-        self._upsert(bind, entry, ['id'])
+            entry.update(field.load(self.bind, row))
+        self._upsert(self.bind, entry, ['id'])
 
-    def load_all(self, bind, rows):
+    def load_all(self, rows):
         for row in rows:
-            self.load(bind, row)
+            self.load(row)
         #bind.commit()
 
-    def flush(self, bind):
+    def flush(self):
         for field in self.fields:
-            field.flush(bind)
-        self._flush(bind)
+            field.flush(self.bind)
+        self._flush(self.bind)
 
-    def drop(self, bind):
+    def drop(self):
         for field in self.fields:
-            field.drop(bind)
-        self._drop(bind)
+            field.drop(self.bind)
+        self._drop(self.bind)
 
     def key(self, key):
         """ For a given ``key``, find a column to indentify it in a query.
@@ -90,7 +97,7 @@ class Dataset(TableHandler):
             return dimension.alias.c[attr_name]
         return self.alias.c[dimension.column.name]
 
-    def materialize(self, bind, conditions="1=1", order_by=None):
+    def materialize(self, conditions="1=1", order_by=None):
         """ Generate a fully denormalized view of the entries on this 
         table. """
         joins = self.alias
@@ -99,7 +106,7 @@ class Dataset(TableHandler):
         query = db.select([f.selectable for f in self.fields], 
                        conditions, joins, order_by=order_by,
                        use_labels=True)
-        rp = bind.execute(query)
+        rp = self.bind.execute(query)
         while True:
             row = rp.fetchone()
             if row is None:
@@ -115,7 +122,7 @@ class Dataset(TableHandler):
                     result[field][attr] = v
             yield result
 
-    def aggregate(self, bind, metric='amount', drilldowns=None, cuts=None, 
+    def aggregate(self, metric='amount', drilldowns=None, cuts=None, 
             page=1, pagesize=10000, order=None):
 
         cuts = cuts or []
@@ -155,7 +162,7 @@ class Dataset(TableHandler):
         #print query
         summary = {metric: 0.0, 'num_entries': 0}
         drilldown = []
-        rp = bind.execute(query)
+        rp = self.bind.execute(query)
         while True:
             row = rp.fetchone()
             if row is None:
