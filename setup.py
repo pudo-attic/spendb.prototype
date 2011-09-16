@@ -22,7 +22,15 @@ setup(name='spendb',
       include_package_data=True,
       zip_safe=False,
       install_requires=[
-          # -*- Extra requirements: -*-
+          "flask==0.7.2",
+          "sqlalchemy==0.7.2",
+          "flask-sqlalchemy==0.15",
+          "sqlalchemy-migrate==0.7.1",
+          "flask-celery=2.2.5",
+          "kombu-sqlalchemy=1.1.0",
+
+          "nose>=1.1.2",
+          "ipython>=0.11"
       ],
       entry_points="""
       # -*- Entry points: -*-
